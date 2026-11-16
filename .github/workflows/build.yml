@@ -112,7 +112,6 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
-      - name: Inspect rigging implementation before v0.3.0
         if: steps.locate.outputs.kind == 'capacitor'
         working-directory: ${{ steps.locate.outputs.root }}
         shell: bash
@@ -123,7 +122,7 @@ jobs:
           echo "===== PACKAGE ====="
           cat package.json
 
-      - name: Patch model importer and publish RIG STUDIO v0.2.1
+      - name: Add bone pose testing controls and publish RIG STUDIO v0.3.0
         if: steps.locate.outputs.kind == 'capacitor'
         working-directory: ${{ steps.locate.outputs.root }}
         env:
@@ -138,111 +137,185 @@ jobs:
           main = Path("src/main.ts")
           source = main.read_text(encoding="utf-8")
 
-          # Record the UI wiring so this build log can verify the picker remains connected.
-          for i, line in enumerate(source.splitlines(), 1):
-              if any(key in line for key in ("importBtn", "emptyImport", "fileInput", "addEventListener", ".onclick")):
-                  print(f"IMPORT_UI {i}: {line}")
+          panel_anchor = '      <div id="boneList" class="bone-list"><span class="muted">Nenhum osso criado.</span></div>'
+          panel = panel_anchor + '''
+                <div class="section-title">TESTE DE DEFORMAÇÃO</div>
+                <div id="posePanel" style="display:grid;gap:10px;padding:12px;background:#1b2230;border:1px solid #303b4e;border-radius:12px">
+                  <label style="font-size:12px;color:#aab6c9">OSSO SELECIONADO
+                    <select id="poseBoneSelect" disabled style="display:block;width:100%;margin-top:6px;padding:10px;background:#111722;color:#eef3fb;border:1px solid #3b465b;border-radius:8px"></select>
+                  </label>
+                  <div style="display:grid;gap:5px">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação X <output id="poseXValue">0°</output></label>
+                    <input id="poseX" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                  </div>
+                  <div style="display:grid;gap:5px">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação Y <output id="poseYValue">0°</output></label>
+                    <input id="poseY" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                  </div>
+                  <div style="display:grid;gap:5px">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação Z <output id="poseZValue">0°</output></label>
+                    <input id="poseZ" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button id="resetBonePose" class="secondary" disabled style="flex:1">RESETAR OSSO</button>
+                    <button id="resetAllPose" class="secondary" disabled style="flex:1">RESETAR POSE</button>
+                  </div>
+                  <small id="poseHint" style="color:#93a2b8;line-height:1.4">Gere o Auto Rig humanoide para testar a deformação da malha.</small>
+                </div>'''
+          if panel_anchor not in source:
+              raise SystemExit("Could not find the rig hierarchy panel anchor.")
+          if 'id="posePanel"' not in source:
+              source = source.replace(panel_anchor, panel, 1)
 
-          fbx_import = "import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';"
-          if fbx_import not in source:
-              raise SystemExit("Could not find the existing FBXLoader import; source was not modified.")
-          if "OBJLoader" not in source:
+          state_anchor = "let autoRigged = false;"
+          state = state_anchor + """
+          let poseBones: THREE.Bone[] = [];
+          let selectedPoseBone: THREE.Bone | null = null;
+          let restPoseRotations = new Map<THREE.Bone, THREE.Euler>();
+          """
+          if state_anchor not in source:
+              raise SystemExit("Could not find autoRigged state declaration.")
+          if "let restPoseRotations" not in source:
+              source = source.replace(state_anchor, state, 1)
+
+          refresh_anchor = "const restoreAutoRigMeshes = () => {"
+          pose_helpers = """const updatePoseSliders = () => {
+            const bone = selectedPoseBone;
+            const values = bone ? [bone.rotation.x, bone.rotation.y, bone.rotation.z].map(v => Math.round(THREE.MathUtils.radToDeg(v))) : [0, 0, 0];
+            (['X', 'Y', 'Z'] as const).forEach((axis, index) => {
+              const slider = $<HTMLInputElement>('pose' + axis);
+              const output = $('pose' + axis + 'Value');
+              slider.value = String(values[index]);
+              output.textContent = values[index] + '°';
+            });
+          };
+
+          const syncPosePanel = () => {
+            const select = $<HTMLSelectElement>('poseBoneSelect');
+            const enabled = autoRigged && !!rootBone;
+            poseBones = [];
+            if (rootBone) rootBone.traverse(object => {
+              if ((object as THREE.Bone).isBone) poseBones.push(object as THREE.Bone);
+            });
+            select.innerHTML = '';
+            poseBones.forEach((bone, index) => {
+              const option = document.createElement('option');
+              option.value = String(index);
+              option.textContent = bone.name;
+              select.appendChild(option);
+            });
+            if (!selectedPoseBone || !poseBones.includes(selectedPoseBone)) selectedPoseBone = poseBones[0] || null;
+            if (selectedPoseBone) select.value = String(poseBones.indexOf(selectedPoseBone));
+            select.disabled = !enabled || poseBones.length === 0;
+            (['X', 'Y', 'Z'] as const).forEach(axis => {
+              $<HTMLInputElement>('pose' + axis).disabled = !enabled || !selectedPoseBone;
+            });
+            $<HTMLButtonElement>('resetBonePose').disabled = !enabled || !selectedPoseBone;
+            $<HTMLButtonElement>('resetAllPose').disabled = !enabled;
+            $('poseHint').textContent = enabled
+              ? 'Arraste os controles para girar um osso e observar como os pesos automáticos deformam a malha. Use ângulos pequenos para avaliar o resultado.'
+              : 'Gere o Auto Rig humanoide para testar a deformação da malha.';
+            updatePoseSliders();
+          };
+
+          const applyPoseRotation = (axis: 'x' | 'y' | 'z', value: string) => {
+            if (!selectedPoseBone || !autoRigged) return;
+            selectedPoseBone.rotation[axis] = THREE.MathUtils.degToRad(Number(value));
+            $('pose' + axis.toUpperCase() + 'Value').textContent = value + '°';
+            selectedPoseBone.updateWorldMatrix(true, true);
+            if (skeletonHelper) skeletonHelper.update();
+          };
+
+          const resetSelectedPoseBone = () => {
+            if (!selectedPoseBone) return;
+            const rest = restPoseRotations.get(selectedPoseBone);
+            if (rest) selectedPoseBone.rotation.copy(rest);
+            updatePoseSliders();
+            selectedPoseBone.updateWorldMatrix(true, true);
+            if (skeletonHelper) skeletonHelper.update();
+          };
+
+          const resetEntirePose = () => {
+            restPoseRotations.forEach((rotation, bone) => bone.rotation.copy(rotation));
+            updatePoseSliders();
+            rootBone?.updateWorldMatrix(true, true);
+            if (skeletonHelper) skeletonHelper.update();
+            toast('Pose original restaurada.');
+          };
+
+          """
+          if refresh_anchor not in source:
+              raise SystemExit("Could not find restoreAutoRigMeshes insertion point.")
+          if "const syncPosePanel" not in source:
+              source = source.replace(refresh_anchor, pose_helpers + refresh_anchor, 1)
+
+          # Snapshot the bind/rest rotations only after successful automatic skinning.
+          success_anchor = "    autoRigged = true;"
+          if success_anchor not in source:
+              raise SystemExit("Could not find successful Auto Rig state assignment.")
+          if "restPoseRotations = new Map" not in source:
               source = source.replace(
-                  fbx_import,
-                  fbx_import + "\nimport { OBJLoader } from 'three/addons/loaders/OBJLoader.js';\nimport { STLLoader } from 'three/addons/loaders/STLLoader.js';"
+                  success_anchor,
+                  success_anchor + """
+              restPoseRotations = new Map(orderedBones.map(bone => [bone, bone.rotation.clone()]));
+              selectedPoseBone = hips;""",
+                  1
               )
 
-          old_accept = 'accept=".glb,.gltf,.fbx,model/gltf-binary,model/gltf+json"'
-          new_accept = 'accept=".glb,.gltf,.fbx,.obj,.stl,model/gltf-binary,model/gltf+json,application/octet-stream"'
-          if old_accept in source:
-              source = source.replace(old_accept, new_accept)
-          elif new_accept not in source:
-              raise SystemExit("Could not find the model file picker accept attribute.")
+          # Enable the pose panel after Auto Rig and keep it in sync with clear/reset.
+          auto_refresh_anchor = "    updateStats(); refreshBoneList();"
+          auto_refresh_replacement = "    updateStats(); refreshBoneList(); syncPosePanel();"
+          if auto_refresh_anchor not in source:
+              raise SystemExit("Could not find Auto Rig UI refresh call.")
+          source = source.replace(auto_refresh_anchor, auto_refresh_replacement, 1)
 
-          source = source.replace("GLB · GLTF · FBX", "GLB · GLTF · FBX · OBJ · STL")
-          source = source.replace("GLB / FBX", "GLB / FBX / OBJ / STL")
+          remove_anchor = "  rootBone = null; lastBone = null; boneCount = 0;"
+          remove_replacement = remove_anchor + """
+            selectedPoseBone = null;
+            poseBones = [];
+            restPoseRotations.clear();
+            syncPosePanel();"""
+          if remove_anchor not in source:
+              raise SystemExit("Could not find rig reset state line.")
+          if "restPoseRotations.clear()" not in source:
+              source = source.replace(remove_anchor, remove_replacement, 1)
 
-          start_marker = "const loadModel = async (file: File) => {"
-          end_marker = "type RigSegment ="
-          start = source.find(start_marker)
-          end = source.find(end_marker, start + len(start_marker))
-          if start < 0 or end < 0:
-              raise SystemExit("Could not safely locate loadModel function boundaries.")
+          # Add functional pose controls to the existing event wiring.
+          event_anchor = "$('autoRigBtn').addEventListener('click', createHumanoidRig);"
+          events = event_anchor + """
+          $('poseBoneSelect').addEventListener('change', event => {
+            const index = Number((event.target as HTMLSelectElement).value);
+            selectedPoseBone = poseBones[index] || null;
+            updatePoseSliders();
+          });
+          (['X', 'Y', 'Z'] as const).forEach(axis => {
+            $('pose' + axis).addEventListener('input', event => {
+              applyPoseRotation(axis.toLowerCase() as 'x' | 'y' | 'z', (event.target as HTMLInputElement).value);
+            });
+          });
+          $('resetBonePose').addEventListener('click', resetSelectedPoseBone);
+          $('resetAllPose').addEventListener('click', resetEntirePose);
+          syncPosePanel();"""
+          if event_anchor not in source:
+              raise SystemExit("Could not find Auto Rig event listener.")
+          if "resetEntirePose" not in source[source.find(event_anchor):]:
+              source = source.replace(event_anchor, events, 1)
 
-          replacement = r"""const MAX_MODEL_SIZE = 100 * 1024 * 1024;
-          const loadModel = async (file: File) => {
-            if (file.size > MAX_MODEL_SIZE) {
-              toast('Arquivo muito grande (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). O limite atual é 100 MB.');
-              return;
-            }
-            const ext = file.name.split('.').pop()?.toLowerCase() || '';
-            const url = URL.createObjectURL(file);
-            try {
-              let loaded: THREE.Object3D;
-              if (ext === 'fbx') {
-                loaded = await new FBXLoader().loadAsync(url);
-              } else if (ext === 'glb' || ext === 'gltf') {
-                const result = await new GLTFLoader().loadAsync(url);
-                loaded = result.scene;
-              } else if (ext === 'obj') {
-                loaded = await new OBJLoader().loadAsync(url);
-              } else if (ext === 'stl') {
-                const geometry = await new STLLoader().loadAsync(url);
-                geometry.computeVertexNormals();
-                loaded = new THREE.Mesh(
-                  geometry,
-                  new THREE.MeshStandardMaterial({ color: 0xb9c2d0, roughness: 0.82, metalness: 0.02 })
-                );
-              } else {
-                throw new Error('Formato .' + (ext || 'desconhecido') + ' não suportado. Use GLB, GLTF, FBX, OBJ ou STL.');
-              }
-
-              if (model) scene.remove(model);
-              removeRig();
-              model = loaded;
-              model.name = file.name;
-              model.traverse(o => {
-                if ((o as THREE.Mesh).isMesh) {
-                  const mesh = o as THREE.Mesh;
-                  mesh.castShadow = true;
-                  mesh.receiveShadow = true;
-                  if (mesh.material) {
-                    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                    materials.forEach(m => {
-                      if ('side' in m) (m as THREE.Material).side = THREE.DoubleSide;
-                    });
-                  }
-                }
-              });
-              scene.add(model);
-              frameObject(model);
-              updateStats();
-              toast('Modelo importado: ' + file.name);
-            } catch (e) {
-              console.error('Falha ao importar modelo 3D:', e);
-              const message = e instanceof Error ? e.message : 'Não foi possível importar o arquivo.';
-              toast('Falha na importação: ' + message);
-            } finally {
-              URL.revokeObjectURL(url);
-            }
-          };
-          """
-          source = source[:start] + replacement + source[end:]
           main.write_text(source, encoding="utf-8")
-          print("Patched import support: GLB, GLTF, FBX, OBJ and STL; maximum file size 100 MB.")
+          print("Added interactive bone selection, X/Y/Z pose rotation, per-bone reset and full-pose reset.")
           PY
 
           cd "$PROJECT_ROOT"
-          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.2.1_source.zip" . \
+          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.3.0_source.zip" . \
             -x "node_modules/*" "*/node_modules/*" "dist/*" "*/dist/*" "android/*" "*/android/*" ".git/*" "*/.git/*"
           cd "$GITHUB_WORKSPACE"
-          unzip -tq RIG_STUDIO_v0.2.1_source.zip
+          unzip -tq RIG_STUDIO_v0.3.0_source.zip
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f RIG_STUDIO_v0.2.0_source.zip
-          git add RIG_STUDIO_v0.2.1_source.zip
-          git commit -m "Release RIG STUDIO v0.2.1 import formats and 100 MB model support [skip ci]"
+          git rm -f RIG_STUDIO_v0.2.0_source.zip RIG_STUDIO_v0.2.1_source.zip || true
+          git add RIG_STUDIO_v0.3.0_source.zip
+          git commit -m "Release RIG STUDIO v0.3.0 interactive bone pose testing [skip ci]"
           git push origin HEAD:main
 
       - name: Build Capacitor Android project
