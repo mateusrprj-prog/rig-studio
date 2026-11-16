@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' ! -name 'RIG_STUDIO_v0.2.0_source.zip' ! -name 'RIG_STUDIO_v0.2.1_source.zip' ! -name 'RIG_STUDIO_v0.3.0_source.zip' | sort)
+          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' ! -name 'RIG_STUDIO_v0.2.0_source.zip' ! -name 'RIG_STUDIO_v0.2.1_source.zip' | sort)
           if [ "${#zips[@]}" -eq 0 ]; then
             echo "::error::No .zip archive was found in the repository."
             exit 1
