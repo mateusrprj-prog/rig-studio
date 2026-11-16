@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' ! -name 'RIG_STUDIO_v0.2.0_source.zip' ! -name 'RIG_STUDIO_v0.2.1_source.zip' | sort)
+          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' ! -name 'RIG_STUDIO_v0.2.0_source.zip' ! -name 'RIG_STUDIO_v0.2.1_source.zip' ! -name 'RIG_STUDIO_v0.3.0_source.zip' | sort)
           if [ "${#zips[@]}" -eq 0 ]; then
             echo "::error::No .zip archive was found in the repository."
             exit 1
@@ -112,28 +112,12 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
-      - name: Inspect current rig generator for next rig architecture
+      - name: Build Humanoid Control Rig and IK tools for RIG STUDIO v0.4.0
         if: steps.locate.outputs.kind == 'capacitor'
-        working-directory: ${{ steps.locate.outputs.root }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "===== RIG FUNCTIONS ====="
-          grep -nE "createHumanoidRig|skin|Skeleton|orderedBones|computeVertexNormals|boneWeights|weights|rootBone|restoreAutoRigMeshes|autoRigged" src/main.ts | head -120
-          echo "===== AUTO RIG SOURCE ====="
-          line=$(grep -n "const createHumanoidRig" src/main.ts | head -1 | cut -d: -f1)
-          if [ -n "$line" ]; then
-            start=$((line > 35 ? line - 35 : 1))
-            end=$((line + 380))
-            sed -n "${start},${end}p" src/main.ts
-          fi
-
-      - name: Add bone pose testing controls and publish RIG STUDIO v0.3.0
-        if: steps.locate.outputs.kind == 'capacitor'
-        working-directory: ${{ steps.locate.outputs.root }}
+        working-directory: \${{ steps.locate.outputs.root }}
         env:
-          PROJECT_ROOT: ${{ steps.locate.outputs.root }}
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+          PROJECT_ROOT: \${{ steps.locate.outputs.root }}
+          GITHUB_WORKSPACE: \${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
@@ -143,193 +127,344 @@ jobs:
           main = Path("src/main.ts")
           source = main.read_text(encoding="utf-8")
 
-          # The v0.3.0 archive already has the pose UI; make the type-safe helper fix idempotently.
-          if 'id="posePanel"' in source:
-              source = source.replace("skeletonHelper.update()", "skeletonHelper.updateMatrixWorld(true)")
-              main.write_text(source, encoding="utf-8")
-              print("Pose panel already exists; corrected SkeletonHelper world-matrix updates.")
-              raise SystemExit(0)
-
-          panel_anchor = '      <div id="boneList" class="bone-list"><span class="muted">Nenhum osso criado.</span></div>'
-          panel = panel_anchor + '''
-                <div class="section-title">TESTE DE DEFORMAÇÃO</div>
-                <div id="posePanel" style="display:grid;gap:10px;padding:12px;background:#1b2230;border:1px solid #303b4e;border-radius:12px">
-                  <label style="font-size:12px;color:#aab6c9">OSSO SELECIONADO
-                    <select id="poseBoneSelect" disabled style="display:block;width:100%;margin-top:6px;padding:10px;background:#111722;color:#eef3fb;border:1px solid #3b465b;border-radius:8px"></select>
+          # Add a dedicated IK control panel below the direct bone-pose test panel.
+          panel_anchor = '      <div class="bottom-actions"><button id="resetViewBtn"'
+          panel = '''      <div class="section-title">HUMANOID CONTROL RIG · BETA</div>
+                <div id="ikPanel" style="display:grid;gap:10px;padding:12px;background:#1b2230;border:1px solid #303b4e;border-radius:12px">
+                  <label style="font-size:12px;color:#aab6c9">CONTROLE ATIVO
+                    <select id="ikControlSelect" disabled style="display:block;width:100%;margin-top:6px;padding:10px;background:#111722;color:#eef3fb;border:1px solid #3b465b;border-radius:8px"></select>
                   </label>
                   <div style="display:grid;gap:5px">
-                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação X <output id="poseXValue">0°</output></label>
-                    <input id="poseX" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Alvo X <output id="ikXValue">0</output></label>
+                    <input id="ikX" type="range" min="-100" max="100" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
                   </div>
                   <div style="display:grid;gap:5px">
-                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação Y <output id="poseYValue">0°</output></label>
-                    <input id="poseY" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Alvo Y <output id="ikYValue">0</output></label>
+                    <input id="ikY" type="range" min="-100" max="100" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
                   </div>
                   <div style="display:grid;gap:5px">
-                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Rotação Z <output id="poseZValue">0°</output></label>
-                    <input id="poseZ" type="range" min="-90" max="90" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
+                    <label style="display:flex;justify-content:space-between;font-size:12px;color:#c5d0df">Alvo Z <output id="ikZValue">0</output></label>
+                    <input id="ikZ" type="range" min="-100" max="100" step="1" value="0" disabled style="width:100%;accent-color:#62e6c5">
                   </div>
-                  <div style="display:flex;gap:8px">
-                    <button id="resetBonePose" class="secondary" disabled style="flex:1">RESETAR OSSO</button>
-                    <button id="resetAllPose" class="secondary" disabled style="flex:1">RESETAR POSE</button>
-                  </div>
-                  <small id="poseHint" style="color:#93a2b8;line-height:1.4">Gere o Auto Rig humanoide para testar a deformação da malha.</small>
-                </div>'''
-          if panel_anchor not in source:
-              raise SystemExit("Could not find the rig hierarchy panel anchor.")
-          if 'id="posePanel"' not in source:
-              source = source.replace(panel_anchor, panel, 1)
+                  <button id="resetIKTarget" class="secondary" disabled>RESTAURAR ALVO</button>
+                  <small id="ikHint" style="color:#93a2b8;line-height:1.4">Gere o Auto Rig para criar controladores de mãos e pés. Selecione um controle e mova seu alvo para testar o IK.</small>
+                </div>
+          '''
+          if 'id="ikPanel"' not in source:
+              if panel_anchor not in source:
+                  raise SystemExit("Could not find the existing workspace bottom-actions panel.")
+              source = source.replace(panel_anchor, panel + panel_anchor, 1)
 
+          # State for a distinct control rig: these target objects do not deform the mesh.
           state_anchor = "let autoRigged = false;"
-          state = state_anchor + """
-          let poseBones: THREE.Bone[] = [];
-          let selectedPoseBone: THREE.Bone | null = null;
-          let restPoseRotations = new Map<THREE.Bone, THREE.Euler>();
+          state_block = state_anchor + """
+          type IKLimbControl = {
+            id: string;
+            label: string;
+            base: THREE.Bone;
+            middle: THREE.Bone;
+            end: THREE.Bone;
+            target: THREE.Mesh;
+            restTarget: THREE.Vector3;
+            upperLength: number;
+            lowerLength: number;
+            pole: THREE.Vector3;
+            height: number;
+          };
+          let controlRigGroup: THREE.Group | null = null;
+          let ikChains: IKLimbControl[] = [];
+          let selectedIKChain: IKLimbControl | null = null;
           """
           if state_anchor not in source:
-              raise SystemExit("Could not find autoRigged state declaration.")
-          if "let restPoseRotations" not in source:
-              source = source.replace(state_anchor, state, 1)
+              raise SystemExit("Could not locate the rig state declaration.")
+          if "type IKLimbControl =" not in source:
+              source = source.replace(state_anchor, state_block, 1)
 
-          refresh_anchor = "const restoreAutoRigMeshes = () => {"
-          pose_helpers = """const updatePoseSliders = () => {
-            const bone = selectedPoseBone;
-            const values = bone ? [bone.rotation.x, bone.rotation.y, bone.rotation.z].map(v => Math.round(THREE.MathUtils.radToDeg(v))) : [0, 0, 0];
-            (['X', 'Y', 'Z'] as const).forEach((axis, index) => {
-              const slider = $<HTMLInputElement>('pose' + axis);
-              const output = $('pose' + axis + 'Value');
-              slider.value = String(values[index]);
-              output.textContent = values[index] + '°';
-            });
+          helpers_anchor = "const restoreAutoRigMeshes = () => {"
+          helpers = r"""const getBoneWorldPosition = (bone: THREE.Bone) => {
+            bone.updateWorldMatrix(true, false);
+            return bone.getWorldPosition(new THREE.Vector3());
           };
 
-          const syncPosePanel = () => {
-            const select = $<HTMLSelectElement>('poseBoneSelect');
-            const enabled = autoRigged && !!rootBone;
-            poseBones = [];
-            if (rootBone) rootBone.traverse(object => {
-              if ((object as THREE.Bone).isBone) poseBones.push(object as THREE.Bone);
+          const setBoneWorldPosition = (bone: THREE.Bone, worldPosition: THREE.Vector3) => {
+            const parent = bone.parent;
+            if (!parent) return;
+            parent.updateWorldMatrix(true, false);
+            bone.position.copy(parent.worldToLocal(worldPosition.clone()));
+            bone.updateMatrix();
+            bone.updateWorldMatrix(false, true);
+          };
+
+          const solveTwoBoneIK = (chain: IKLimbControl) => {
+            const start = getBoneWorldPosition(chain.base);
+            const target = chain.target.position.clone();
+            const delta = target.clone().sub(start);
+            const rawDistance = delta.length();
+            if (rawDistance < 1e-7) return;
+
+            const minimumReach = Math.abs(chain.upperLength - chain.lowerLength) + 1e-5;
+            const maximumReach = Math.max(minimumReach, chain.upperLength + chain.lowerLength - 1e-5);
+            const distance = THREE.MathUtils.clamp(rawDistance, minimumReach, maximumReach);
+            const direction = delta.normalize();
+
+            let pole = chain.pole.clone().addScaledVector(direction, -chain.pole.dot(direction));
+            if (pole.lengthSq() < 1e-8) {
+              pole = new THREE.Vector3(0, 0, 1).cross(direction);
+              if (pole.lengthSq() < 1e-8) pole = new THREE.Vector3(0, 1, 0).cross(direction);
+            }
+            pole.normalize();
+
+            const a = chain.upperLength;
+            const b = chain.lowerLength;
+            const along = (a * a + distance * distance - b * b) / (2 * distance);
+            const height = Math.sqrt(Math.max(0, a * a - along * along));
+            const elbowOrKnee = start.clone()
+              .addScaledVector(direction, along)
+              .addScaledVector(pole, height);
+            const reachableEnd = start.clone().addScaledVector(direction, distance);
+
+            setBoneWorldPosition(chain.middle, elbowOrKnee);
+            setBoneWorldPosition(chain.end, reachableEnd);
+            chain.base.updateWorldMatrix(true, true);
+            chain.middle.updateWorldMatrix(true, true);
+            if (skeletonHelper) skeletonHelper.updateMatrixWorld(true);
+          };
+
+          const updateIKSliders = () => {
+            const chain = selectedIKChain;
+            const enabled = autoRigged && !!chain;
+            const offsets = chain ? chain.target.position.clone().sub(chain.restTarget) : new THREE.Vector3();
+            const maxOffset = chain ? chain.height * 0.25 : 1;
+            (['X', 'Y', 'Z'] as const).forEach((axis, index) => {
+              const component = index === 0 ? offsets.x : index === 1 ? offsets.y : offsets.z;
+              const value = Math.round(THREE.MathUtils.clamp(component / maxOffset, -1, 1) * 100);
+              $<HTMLInputElement>('ik' + axis).value = String(value);
+              $('ik' + axis + 'Value').textContent = String(value);
+              $<HTMLInputElement>('ik' + axis).disabled = !enabled;
             });
+            $<HTMLSelectElement>('ikControlSelect').disabled = !enabled;
+            $<HTMLButtonElement>('resetIKTarget').disabled = !enabled;
+            $('ikHint').textContent = enabled
+              ? 'Controlador independente do esqueleto de deformação. Ajuste o alvo: o solver de dois ossos reposiciona cotovelo ou joelho preservando os comprimentos.'
+              : 'Gere o Auto Rig para criar controladores de mãos e pés. Selecione um controle e mova seu alvo para testar o IK.';
+          };
+
+          const selectIKChain = (id: string) => {
+            selectedIKChain = ikChains.find(chain => chain.id === id) || null;
+            if (selectedIKChain) $<HTMLSelectElement>('ikControlSelect').value = selectedIKChain.id;
+            ikChains.forEach(chain => {
+              const material = chain.target.material as THREE.MeshBasicMaterial;
+              material.opacity = chain === selectedIKChain ? 1 : 0.72;
+            });
+            updateIKSliders();
+          };
+
+          const syncIKPanel = () => {
+            const select = $<HTMLSelectElement>('ikControlSelect');
             select.innerHTML = '';
-            poseBones.forEach((bone, index) => {
+            ikChains.forEach(chain => {
               const option = document.createElement('option');
-              option.value = String(index);
-              option.textContent = bone.name;
+              option.value = chain.id;
+              option.textContent = chain.label;
               select.appendChild(option);
             });
-            if (!selectedPoseBone || !poseBones.includes(selectedPoseBone)) selectedPoseBone = poseBones[0] || null;
-            if (selectedPoseBone) select.value = String(poseBones.indexOf(selectedPoseBone));
-            select.disabled = !enabled || poseBones.length === 0;
-            (['X', 'Y', 'Z'] as const).forEach(axis => {
-              $<HTMLInputElement>('pose' + axis).disabled = !enabled || !selectedPoseBone;
-            });
-            $<HTMLButtonElement>('resetBonePose').disabled = !enabled || !selectedPoseBone;
-            $<HTMLButtonElement>('resetAllPose').disabled = !enabled;
-            $('poseHint').textContent = enabled
-              ? 'Arraste os controles para girar um osso e observar como os pesos automáticos deformam a malha. Use ângulos pequenos para avaliar o resultado.'
-              : 'Gere o Auto Rig humanoide para testar a deformação da malha.';
-            updatePoseSliders();
+            if (!selectedIKChain || !ikChains.includes(selectedIKChain)) selectedIKChain = ikChains[0] || null;
+            if (selectedIKChain) select.value = selectedIKChain.id;
+            select.disabled = !autoRigged || ikChains.length === 0;
+            updateIKSliders();
           };
 
-          const applyPoseRotation = (axis: 'x' | 'y' | 'z', value: string) => {
-            if (!selectedPoseBone || !autoRigged) return;
-            selectedPoseBone.rotation[axis] = THREE.MathUtils.degToRad(Number(value));
-            $('pose' + axis.toUpperCase() + 'Value').textContent = value + '°';
-            selectedPoseBone.updateWorldMatrix(true, true);
-            if (skeletonHelper) skeletonHelper.update();
+          const buildHumanoidControlRig = (height: number) => {
+            if (!model || !rootBone) throw new Error('O esqueleto de deformação não está pronto.');
+            if (controlRigGroup) scene.remove(controlRigGroup);
+            controlRigGroup = new THREE.Group();
+            controlRigGroup.name = 'RIG_STUDIO_CONTROL_RIG';
+            scene.add(controlRigGroup);
+            ikChains = [];
+
+            const specs = [
+              { id: 'arm_L', label: 'Mão esquerda · IK', base: 'Shoulder_L', middle: 'UpperArm_L', end: 'Forearm_L', color: 0x62e6c5 },
+              { id: 'arm_R', label: 'Mão direita · IK', base: 'Shoulder_R', middle: 'UpperArm_R', end: 'Forearm_R', color: 0xffb86b },
+              { id: 'leg_L', label: 'Pé esquerdo · IK', base: 'UpperLeg_L', middle: 'LowerLeg_L', end: 'Foot_L', color: 0x62a8ff },
+              { id: 'leg_R', label: 'Pé direito · IK', base: 'UpperLeg_R', middle: 'LowerLeg_R', end: 'Foot_R', color: 0xd28cff }
+            ];
+
+            for (const spec of specs) {
+              const base = rootBone.getObjectByName(spec.base) as THREE.Bone | undefined;
+              const middle = rootBone.getObjectByName(spec.middle) as THREE.Bone | undefined;
+              const end = rootBone.getObjectByName(spec.end) as THREE.Bone | undefined;
+              if (!base || !middle || !end) continue;
+
+              const startPosition = getBoneWorldPosition(base);
+              const middlePosition = getBoneWorldPosition(middle);
+              const endPosition = getBoneWorldPosition(end);
+              const upperLength = startPosition.distanceTo(middlePosition);
+              const lowerLength = middlePosition.distanceTo(endPosition);
+              if (upperLength < 1e-5 || lowerLength < 1e-5) continue;
+
+              const axis = endPosition.clone().sub(startPosition).normalize();
+              const pole = middlePosition.clone().sub(startPosition);
+              pole.addScaledVector(axis, -pole.dot(axis));
+              if (pole.lengthSq() < 1e-8) pole.set(0, 0, 1);
+              pole.normalize();
+
+              const material = new THREE.MeshBasicMaterial({
+                color: spec.color,
+                depthTest: false,
+                transparent: true,
+                opacity: 1
+              });
+              const target = new THREE.Mesh(
+                new THREE.TorusGeometry(height * 0.026, height * 0.004, 8, 28),
+                material
+              );
+              target.name = 'CTRL_' + spec.id;
+              target.userData.ikChainId = spec.id;
+              target.position.copy(endPosition);
+              target.renderOrder = 1000;
+              controlRigGroup.add(target);
+
+              const center = new THREE.Mesh(
+                new THREE.SphereGeometry(height * 0.007, 12, 10),
+                new THREE.MeshBasicMaterial({ color: spec.color, depthTest: false })
+              );
+              center.name = 'CTRL_CENTER_' + spec.id;
+              target.add(center);
+
+              ikChains.push({
+                id: spec.id,
+                label: spec.label,
+                base,
+                middle,
+                end,
+                target,
+                restTarget: endPosition.clone(),
+                upperLength,
+                lowerLength,
+                pole,
+                height
+              });
+            }
+
+            if (ikChains.length === 0) {
+              throw new Error('Não foi possível criar os quatro controles IK.');
+            }
+            selectedIKChain = ikChains[0];
+            syncIKPanel();
+            toast('Control Rig criado: ' + ikChains.length + ' alvos IK.');
           };
 
-          const resetSelectedPoseBone = () => {
-            if (!selectedPoseBone) return;
-            const rest = restPoseRotations.get(selectedPoseBone);
-            if (rest) selectedPoseBone.rotation.copy(rest);
-            updatePoseSliders();
-            selectedPoseBone.updateWorldMatrix(true, true);
-            if (skeletonHelper) skeletonHelper.update();
+          const updateIKTargetFromSliders = () => {
+            const chain = selectedIKChain;
+            if (!chain || !autoRigged) return;
+            const maxOffset = chain.height * 0.25;
+            const x = Number($<HTMLInputElement>('ikX').value) / 100 * maxOffset;
+            const y = Number($<HTMLInputElement>('ikY').value) / 100 * maxOffset;
+            const z = Number($<HTMLInputElement>('ikZ').value) / 100 * maxOffset;
+            chain.target.position.copy(chain.restTarget).add(new THREE.Vector3(x, y, z));
+            solveTwoBoneIK(chain);
+            updateIKSliders();
           };
 
-          const resetEntirePose = () => {
-            restPoseRotations.forEach((rotation, bone) => bone.rotation.copy(rotation));
-            updatePoseSliders();
-            rootBone?.updateWorldMatrix(true, true);
-            if (skeletonHelper) skeletonHelper.update();
-            toast('Pose original restaurada.');
+          const resetIKTarget = () => {
+            if (!selectedIKChain) return;
+            selectedIKChain.target.position.copy(selectedIKChain.restTarget);
+            solveTwoBoneIK(selectedIKChain);
+            updateIKSliders();
+            toast('Alvo IK restaurado.');
           };
 
           """
-          if refresh_anchor not in source:
-              raise SystemExit("Could not find restoreAutoRigMeshes insertion point.")
-          if "const syncPosePanel" not in source:
-              source = source.replace(refresh_anchor, pose_helpers + refresh_anchor, 1)
+          if helpers_anchor not in source:
+              raise SystemExit("Could not find the rig helper insertion point.")
+          if "const buildHumanoidControlRig" not in source:
+              source = source.replace(helpers_anchor, helpers + helpers_anchor, 1)
 
-          # Snapshot the bind/rest rotations only after successful automatic skinning.
+          # Create controls only after all deform meshes have been bound successfully.
           success_anchor = "    autoRigged = true;"
           if success_anchor not in source:
-              raise SystemExit("Could not find successful Auto Rig state assignment.")
-          if "restPoseRotations = new Map" not in source:
-              source = source.replace(
-                  success_anchor,
-                  success_anchor + """
-              restPoseRotations = new Map(orderedBones.map(bone => [bone, bone.rotation.clone()]));
-              selectedPoseBone = hips;""",
-                  1
-              )
+              raise SystemExit("Could not find the successful Auto Rig state assignment.")
+          if "buildHumanoidControlRig(height)" not in source:
+              source = source.replace(success_anchor, success_anchor + "\n    buildHumanoidControlRig(height);", 1)
 
-          # Enable the pose panel after Auto Rig and keep it in sync with clear/reset.
-          auto_refresh_anchor = "    updateStats(); refreshBoneList();"
-          auto_refresh_replacement = "    updateStats(); refreshBoneList(); syncPosePanel();"
-          if auto_refresh_anchor not in source:
-              raise SystemExit("Could not find Auto Rig UI refresh call.")
-          source = source.replace(auto_refresh_anchor, auto_refresh_replacement, 1)
-
-          remove_anchor = "  rootBone = null; lastBone = null; boneCount = 0;"
-          remove_replacement = remove_anchor + """
-            selectedPoseBone = null;
-            poseBones = [];
-            restPoseRotations.clear();
-            syncPosePanel();"""
+          # Remove control objects and solver state together with the deform rig.
+          remove_anchor = "  restoreAutoRigMeshes();"
+          remove_replacement = """  restoreAutoRigMeshes();
+            if (controlRigGroup) { scene.remove(controlRigGroup); controlRigGroup = null; }
+            ikChains = [];
+            selectedIKChain = null;
+            syncIKPanel();"""
           if remove_anchor not in source:
-              raise SystemExit("Could not find rig reset state line.")
-          if "restPoseRotations.clear()" not in source:
+              raise SystemExit("Could not find rig cleanup hook.")
+          if "selectedIKChain = null;" not in source:
               source = source.replace(remove_anchor, remove_replacement, 1)
 
-          # Add functional pose controls to the existing event wiring.
+          # Attach UI events to the target controls.
           event_anchor = "$('autoRigBtn').addEventListener('click', createHumanoidRig);"
           events = event_anchor + """
-          $('poseBoneSelect').addEventListener('change', event => {
-            const index = Number((event.target as HTMLSelectElement).value);
-            selectedPoseBone = poseBones[index] || null;
-            updatePoseSliders();
+          $('ikControlSelect').addEventListener('change', event => {
+            selectIKChain((event.target as HTMLSelectElement).value);
           });
           (['X', 'Y', 'Z'] as const).forEach(axis => {
-            $('pose' + axis).addEventListener('input', event => {
-              applyPoseRotation(axis.toLowerCase() as 'x' | 'y' | 'z', (event.target as HTMLInputElement).value);
-            });
+            $('ik' + axis).addEventListener('input', updateIKTargetFromSliders);
           });
-          $('resetBonePose').addEventListener('click', resetSelectedPoseBone);
-          $('resetAllPose').addEventListener('click', resetEntirePose);
-          syncPosePanel();"""
+          $('resetIKTarget').addEventListener('click', resetIKTarget);
+          syncIKPanel();"""
           if event_anchor not in source:
-              raise SystemExit("Could not find Auto Rig event listener.")
-          if "resetEntirePose" not in source[source.find(event_anchor):]:
+              raise SystemExit("Could not find the Auto Rig event wiring.")
+          if "resetIKTarget').addEventListener" not in source:
               source = source.replace(event_anchor, events, 1)
 
+          # Allow tapping visible controllers in the viewport to select them.
+          pointer_anchor = """renderer.domElement.addEventListener('pointerdown', event => {
+            if (!addBoneMode || !model) return;
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            const hits = raycaster.intersectObject(model, true);"""
+          pointer_replacement = """renderer.domElement.addEventListener('pointerdown', event => {
+            if (!model) return;
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            if (controlRigGroup) {
+              const controlHits = raycaster.intersectObjects(controlRigGroup.children, true);
+              if (controlHits.length) {
+                let object: THREE.Object3D | null = controlHits[0].object;
+                while (object && typeof object.userData.ikChainId !== 'string') object = object.parent;
+                if (object) {
+                  selectIKChain(String(object.userData.ikChainId));
+                  return;
+                }
+              }
+            }
+            if (!addBoneMode) return;
+            const hits = raycaster.intersectObject(model, true);"""
+          if pointer_anchor not in source:
+              raise SystemExit("Could not find existing viewport pointer handler.")
+          if "const controlHits = raycaster.intersectObjects" not in source:
+              source = source.replace(pointer_anchor, pointer_replacement, 1)
+
+          # Keep helper updates compatible with the Three.js SkeletonHelper API.
+          source = source.replace("skeletonHelper.update()", "skeletonHelper.updateMatrixWorld(true)")
+
           main.write_text(source, encoding="utf-8")
-          print("Added interactive bone selection, X/Y/Z pose rotation, per-bone reset and full-pose reset.")
+          print("Added separate humanoid control rig, four two-bone IK targets, tap-to-select controls and mobile target sliders.")
           PY
 
           cd "$PROJECT_ROOT"
-          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.3.0_source.zip" . \
+          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.4.0_source.zip" . \
             -x "node_modules/*" "*/node_modules/*" "dist/*" "*/dist/*" "android/*" "*/android/*" ".git/*" "*/.git/*"
           cd "$GITHUB_WORKSPACE"
-          unzip -tq RIG_STUDIO_v0.3.0_source.zip
+          unzip -tq RIG_STUDIO_v0.4.0_source.zip
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f RIG_STUDIO_v0.2.0_source.zip || true
-          git rm -f RIG_STUDIO_v0.2.1_source.zip || true
-          git add RIG_STUDIO_v0.3.0_source.zip
-          git commit -m "Release RIG STUDIO v0.3.0 interactive bone pose testing [skip ci]"
+          git rm -f RIG_STUDIO_v0.3.0_source.zip || true
+          git add RIG_STUDIO_v0.4.0_source.zip
+          git commit -m "Release RIG STUDIO v0.4.0 humanoid control rig and IK [skip ci]"
           git push origin HEAD:main
 
       - name: Build Capacitor Android project
