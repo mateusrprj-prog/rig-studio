@@ -112,18 +112,127 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
-      - name: Inspect current model import implementation
+      - name: Patch model importer and publish RIG STUDIO v0.2.1
         if: steps.locate.outputs.kind == 'capacitor'
-        working-directory: ${{ steps.locate.outputs.root }}
+        working-directory: \${{ steps.locate.outputs.root }}
+        env:
+          PROJECT_ROOT: \${{ steps.locate.outputs.root }}
+          GITHUB_WORKSPACE: \${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
-          echo "----- PROJECT FILES -----"
-          find src -maxdepth 2 -type f -print
-          echo "----- MAIN TYPESCRIPT -----"
-          sed -n '1,360p' src/main.ts
-          echo "----- PACKAGE CONFIG -----"
-          cat package.json
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path("src/main.ts")
+          source = main.read_text(encoding="utf-8")
+
+          # Record the UI wiring so this build log can verify the picker remains connected.
+          for i, line in enumerate(source.splitlines(), 1):
+              if any(key in line for key in ("importBtn", "emptyImport", "fileInput", "addEventListener", ".onclick")):
+                  print(f"IMPORT_UI {i}: {line}")
+
+          fbx_import = "import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';"
+          if fbx_import not in source:
+              raise SystemExit("Could not find the existing FBXLoader import; source was not modified.")
+          if "OBJLoader" not in source:
+              source = source.replace(
+                  fbx_import,
+                  fbx_import + "\nimport { OBJLoader } from 'three/addons/loaders/OBJLoader.js';\nimport { STLLoader } from 'three/addons/loaders/STLLoader.js';"
+              )
+
+          old_accept = 'accept=".glb,.gltf,.fbx,model/gltf-binary,model/gltf+json"'
+          new_accept = 'accept=".glb,.gltf,.fbx,.obj,.stl,model/gltf-binary,model/gltf+json,application/octet-stream"'
+          if old_accept in source:
+              source = source.replace(old_accept, new_accept)
+          elif new_accept not in source:
+              raise SystemExit("Could not find the model file picker accept attribute.")
+
+          source = source.replace("GLB · GLTF · FBX", "GLB · GLTF · FBX · OBJ · STL")
+          source = source.replace("GLB / FBX", "GLB / FBX / OBJ / STL")
+
+          start_marker = "const loadModel = async (file: File) => {"
+          end_marker = "type RigSegment ="
+          start = source.find(start_marker)
+          end = source.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit("Could not safely locate loadModel function boundaries.")
+
+          replacement = r"""const MAX_MODEL_SIZE = 100 * 1024 * 1024;
+          const loadModel = async (file: File) => {
+            if (file.size > MAX_MODEL_SIZE) {
+              toast('Arquivo muito grande (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). O limite atual é 100 MB.');
+              return;
+            }
+            const ext = file.name.split('.').pop()?.toLowerCase() || '';
+            const url = URL.createObjectURL(file);
+            try {
+              let loaded: THREE.Object3D;
+              if (ext === 'fbx') {
+                loaded = await new FBXLoader().loadAsync(url);
+              } else if (ext === 'glb' || ext === 'gltf') {
+                const result = await new GLTFLoader().loadAsync(url);
+                loaded = result.scene;
+              } else if (ext === 'obj') {
+                loaded = await new OBJLoader().loadAsync(url);
+              } else if (ext === 'stl') {
+                const geometry = await new STLLoader().loadAsync(url);
+                geometry.computeVertexNormals();
+                loaded = new THREE.Mesh(
+                  geometry,
+                  new THREE.MeshStandardMaterial({ color: 0xb9c2d0, roughness: 0.82, metalness: 0.02 })
+                );
+              } else {
+                throw new Error('Formato .' + (ext || 'desconhecido') + ' não suportado. Use GLB, GLTF, FBX, OBJ ou STL.');
+              }
+
+              if (model) scene.remove(model);
+              removeRig();
+              model = loaded;
+              model.name = file.name;
+              model.traverse(o => {
+                if ((o as THREE.Mesh).isMesh) {
+                  const mesh = o as THREE.Mesh;
+                  mesh.castShadow = true;
+                  mesh.receiveShadow = true;
+                  if (mesh.material) {
+                    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                    materials.forEach(m => {
+                      if ('side' in m) (m as THREE.Material).side = THREE.DoubleSide;
+                    });
+                  }
+                }
+              });
+              scene.add(model);
+              frameObject(model);
+              updateStats();
+              toast('Modelo importado: ' + file.name);
+            } catch (e) {
+              console.error('Falha ao importar modelo 3D:', e);
+              const message = e instanceof Error ? e.message : 'Não foi possível importar o arquivo.';
+              toast('Falha na importação: ' + message);
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+          };
+          """
+          source = source[:start] + replacement + source[end:]
+          main.write_text(source, encoding="utf-8")
+          print("Patched import support: GLB, GLTF, FBX, OBJ and STL; maximum file size 100 MB.")
+          PY
+
+          cd "$PROJECT_ROOT"
+          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.2.1_source.zip" . \
+            -x "node_modules/*" "*/node_modules/*" "dist/*" "*/dist/*" "android/*" "*/android/*" ".git/*" "*/.git/*"
+          cd "$GITHUB_WORKSPACE"
+          unzip -tq RIG_STUDIO_v0.2.1_source.zip
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f RIG_STUDIO_v0.2.0_source.zip
+          git add RIG_STUDIO_v0.2.1_source.zip
+          git commit -m "Release RIG STUDIO v0.2.1 import formats and 100 MB model support [skip ci]"
+          git push origin HEAD:main
 
       - name: Build Capacitor Android project
         if: steps.locate.outputs.kind == 'capacitor'
