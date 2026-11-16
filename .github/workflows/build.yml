@@ -112,62 +112,18 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
-      - name: Raise model import limit to 100 MB and publish updated source ZIP
+      - name: Inspect current model import implementation
         if: steps.locate.outputs.kind == 'capacitor'
-        env:
-          PROJECT_ROOT: ${{ steps.locate.outputs.root }}
-          GITHUB_TOKEN: ${{ github.token }}
+        working-directory: ${{ steps.locate.outputs.root }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, re
-          from pathlib import Path
-
-          root = Path(os.environ["PROJECT_ROOT"])
-          patterns = [
-              re.compile(r'((?:MAX_(?:MODEL|FILE|UPLOAD)_SIZE)\s*=\s*)\d+(?=\s*\*\s*1024\s*\*\s*1024)', re.I),
-              re.compile(r'((?:MAX_(?:MODEL|FILE|UPLOAD)_SIZE)_MB\s*=\s*)\d+', re.I),
-              re.compile(r'(file\.size\s*>\s*)\d+(?=\s*\*\s*1024\s*\*\s*1024)', re.I),
-          ]
-          changed = []
-          extensions = {".ts", ".tsx", ".js", ".jsx", ".html"}
-          for path in root.rglob("*"):
-              if not path.is_file() or path.suffix.lower() not in extensions:
-                  continue
-              if any(part in {"node_modules", "dist", "android", ".git"} for part in path.parts):
-                  continue
-              try:
-                  original = path.read_text(encoding="utf-8")
-              except (UnicodeDecodeError, OSError):
-                  continue
-              updated = original
-              for pattern in patterns:
-                  updated = pattern.sub(lambda m: m.group(1) + "100", updated)
-              if updated != original:
-                  path.write_text(updated, encoding="utf-8")
-                  changed.append(str(path))
-          if not changed:
-              raise SystemExit(
-                  "No explicit MAX_MODEL_SIZE/MAX_FILE_SIZE/MAX_UPLOAD_SIZE or "
-                  "file.size MB limit was found. No source ZIP was published; "
-                  "the import limit needs code inspection instead of guessing."
-              )
-          print("Raised the detected model/file import limit to 100 MB in:")
-          print("\\n".join(changed))
-          PY
-
-          cd "$PROJECT_ROOT"
-          zip -qr "$GITHUB_WORKSPACE/RIG_STUDIO_v0.2.1_source.zip" . \\
-            -x "node_modules/*" "dist/*" "android/.gradle/*" ".git/*"
-          cd "$GITHUB_WORKSPACE"
-          unzip -tq RIG_STUDIO_v0.2.1_source.zip
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add RIG_STUDIO_v0.2.1_source.zip
-          git commit -m "Release RIG STUDIO v0.2.1 with 100 MB model import limit [skip ci]"
-          git push origin HEAD:main
+          echo "----- PROJECT FILES -----"
+          find src -maxdepth 2 -type f -print
+          echo "----- MAIN TYPESCRIPT -----"
+          sed -n '1,360p' src/main.ts
+          echo "----- PACKAGE CONFIG -----"
+          cat package.json
 
       - name: Build Capacitor Android project
         if: steps.locate.outputs.kind == 'capacitor'
