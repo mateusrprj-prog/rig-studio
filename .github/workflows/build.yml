@@ -106,8 +106,8 @@ jobs:
               kind, root = "capacitor", capacitor_configs[0].parent
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"kind={kind}\\n")
-              output.write(f"root={root.resolve()}\\n")
+              output.write(f"kind={kind}\n")
+              output.write(f"root={root.resolve()}\n")
 
           print(f"Detected {kind} project at {root}")
           PY
