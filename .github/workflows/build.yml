@@ -114,10 +114,10 @@ jobs:
 
       - name: Build Humanoid Control Rig and IK tools for RIG STUDIO v0.4.0
         if: steps.locate.outputs.kind == 'capacitor'
-        working-directory: \${{ steps.locate.outputs.root }}
+        working-directory: ${{ steps.locate.outputs.root }}
         env:
-          PROJECT_ROOT: \${{ steps.locate.outputs.root }}
-          GITHUB_WORKSPACE: \${{ github.workspace }}
+          PROJECT_ROOT: ${{ steps.locate.outputs.root }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
