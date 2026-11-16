@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Find and extract ZIP archives
+      - name: Find, validate and recover ZIP archives
         shell: bash
         run: |
           set -euo pipefail
@@ -40,11 +40,31 @@ jobs:
             echo "::error::No .zip archive was found in the repository."
             exit 1
           fi
-          mkdir -p extracted
+
+          mkdir -p extracted repaired
           for i in "${!zips[@]}"; do
+            source="${zips[$i]}"
+            archive="$source"
+            echo "Checking archive: $source"
+
+            if ! unzip -tq "$source" >/dev/null 2>&1; then
+              echo "::warning::ZIP validation failed. Attempting to reconstruct its directory."
+              fixed="repaired/archive-$((i + 1)).zip"
+              rm -f "$fixed"
+              if ! zip -FF "$source" --out "$fixed" >/dev/null 2>&1; then
+                echo "::error::Could not recover ZIP archive: $source"
+                exit 1
+              fi
+              if ! unzip -tq "$fixed" >/dev/null 2>&1; then
+                echo "::error::Recovered archive still fails ZIP integrity validation: $source"
+                exit 1
+              fi
+              archive="$fixed"
+            fi
+
             dest="extracted/archive-$((i + 1))"
             mkdir -p "$dest"
-            unzip -q "${zips[$i]}" -d "$dest"
+            unzip -q "$archive" -d "$dest"
           done
 
       - name: Locate Android or Capacitor project
@@ -59,11 +79,11 @@ jobs:
             exit 0
           elif [ "${#gradles[@]}" -gt 1 ]; then
             echo "::error::More than one Android Gradle project was found in the ZIP archives."
-            printf '%s\n' "${gradles[@]}"
+            printf '%s\\n' "${gradles[@]}"
             exit 1
           fi
 
-          mapfile -t caps < <(find extracted -type f \( -name 'capacitor.config.ts' -o -name 'capacitor.config.js' -o -name 'capacitor.config.json' \) | while read -r f; do
+          mapfile -t caps < <(find extracted -type f \\( -name 'capacitor.config.ts' -o -name 'capacitor.config.js' -o -name 'capacitor.config.json' \\) | while read -r f; do
             [ -f "$(dirname "$f")/package.json" ] && echo "$f"
           done | sort)
 
