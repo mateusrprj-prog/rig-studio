@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' | sort)
+          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' ! -name 'RIG_STUDIO_v0.2.0_source.zip' ! -name 'RIG_STUDIO_v0.2.1_source.zip' | sort)
           if [ "${#zips[@]}" -eq 0 ]; then
             echo "::error::No .zip archive was found in the repository."
             exit 1
@@ -126,6 +126,13 @@ jobs:
 
           main = Path("src/main.ts")
           source = main.read_text(encoding="utf-8")
+
+          # The v0.3.0 archive already has the pose UI; make the type-safe helper fix idempotently.
+          if 'id="posePanel"' in source:
+              source = source.replace("skeletonHelper.update()", "skeletonHelper.updateMatrixWorld(true)")
+              main.write_text(source, encoding="utf-8")
+              print("Pose panel already exists; corrected SkeletonHelper world-matrix updates.")
+              raise SystemExit(0)
 
           panel_anchor = '      <div id="boneList" class="bone-list"><span class="muted">Nenhum osso criado.</span></div>'
           panel = panel_anchor + '''
@@ -303,7 +310,8 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f RIG_STUDIO_v0.2.0_source.zip RIG_STUDIO_v0.2.1_source.zip || true
+          git rm -f RIG_STUDIO_v0.2.0_source.zip || true
+          git rm -f RIG_STUDIO_v0.2.1_source.zip || true
           git add RIG_STUDIO_v0.3.0_source.zip
           git commit -m "Release RIG STUDIO v0.3.0 interactive bone pose testing [skip ci]"
           git push origin HEAD:main
