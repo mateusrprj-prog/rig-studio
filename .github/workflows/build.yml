@@ -72,27 +72,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t gradles < <(find extracted -type f -name gradlew | sort)
-          if [ "${#gradles[@]}" -eq 1 ]; then
-            echo "kind=gradle" >> "$GITHUB_OUTPUT"
-            echo "root=$(dirname "${gradles[0]}")" >> "$GITHUB_OUTPUT"
-            exit 0
-          elif [ "${#gradles[@]}" -gt 1 ]; then
-            echo "::error::More than one Android Gradle project was found in the ZIP archives."
-            printf '%s\\n' "${gradles[@]}"
-            exit 1
-          fi
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
 
-          mapfile -t caps < <(find extracted -type f \\( -name 'capacitor.config.ts' -o -name 'capacitor.config.js' -o -name 'capacitor.config.json' \\) | while read -r f; do
-            [ -f "$(dirname "$f")/package.json" ] && echo "$f"
-          done | sort)
+          base = Path("extracted")
+          gradle_projects = sorted(p.parent for p in base.rglob("gradlew") if p.is_file())
 
-          if [ "${#caps[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one Capacitor project (capacitor.config.* plus package.json); found ${#caps[@]}."
-            exit 1
-          fi
-          echo "kind=capacitor" >> "$GITHUB_OUTPUT"
-          echo "root=$(dirname "${caps[0]}")" >> "$GITHUB_OUTPUT"
+          if len(gradle_projects) == 1:
+              kind, root = "gradle", gradle_projects[0]
+          elif len(gradle_projects) > 1:
+              raise SystemExit(
+                  "More than one Android Gradle project was found: "
+                  + ", ".join(str(p) for p in gradle_projects)
+              )
+          else:
+              config_names = {
+                  "capacitor.config.ts",
+                  "capacitor.config.js",
+                  "capacitor.config.json",
+              }
+              capacitor_configs = [
+                  p for p in base.rglob("capacitor.config.*")
+                  if p.name in config_names and (p.parent / "package.json").is_file()
+              ]
+
+              if len(capacitor_configs) != 1:
+                  raise SystemExit(
+                      "Expected exactly one Capacitor project "
+                      "(capacitor.config.* plus package.json); "
+                      f"found {len(capacitor_configs)}."
+                  )
+              kind, root = "capacitor", capacitor_configs[0].parent
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"kind={kind}\\n")
+              output.write(f"root={root.resolve()}\\n")
+
+          print(f"Detected {kind} project at {root}")
+          PY
 
       - name: Build Capacitor Android project
         if: steps.locate.outputs.kind == 'capacitor'
