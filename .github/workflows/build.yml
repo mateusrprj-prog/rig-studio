@@ -112,6 +112,17 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
+      - name: Inspect rigging implementation before v0.3.0
+        if: steps.locate.outputs.kind == 'capacitor'
+        working-directory: ${{ steps.locate.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== MAIN.TS ====="
+          cat src/main.ts
+          echo "===== PACKAGE ====="
+          cat package.json
+
       - name: Patch model importer and publish RIG STUDIO v0.2.1
         if: steps.locate.outputs.kind == 'capacitor'
         working-directory: ${{ steps.locate.outputs.root }}
