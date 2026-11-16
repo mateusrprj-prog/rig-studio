@@ -112,6 +112,22 @@ jobs:
           print(f"Detected {kind} project at {root}")
           PY
 
+      - name: Inspect current rig generator for next rig architecture
+        if: steps.locate.outputs.kind == 'capacitor'
+        working-directory: ${{ steps.locate.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== RIG FUNCTIONS ====="
+          grep -nE "createHumanoidRig|skin|Skeleton|orderedBones|computeVertexNormals|boneWeights|weights|rootBone|restoreAutoRigMeshes|autoRigged" src/main.ts | head -120
+          echo "===== AUTO RIG SOURCE ====="
+          line=$(grep -n "const createHumanoidRig" src/main.ts | head -1 | cut -d: -f1)
+          if [ -n "$line" ]; then
+            start=$((line > 35 ? line - 35 : 1))
+            end=$((line + 380))
+            sed -n "${start},${end}p" src/main.ts
+          fi
+
       - name: Add bone pose testing controls and publish RIG STUDIO v0.3.0
         if: steps.locate.outputs.kind == 'capacitor'
         working-directory: ${{ steps.locate.outputs.root }}
