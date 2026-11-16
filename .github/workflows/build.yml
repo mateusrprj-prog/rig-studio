@@ -1,0 +1,103 @@
+name: Build Android APK from ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.zip'
+      - '*.zip'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Find and extract ZIP archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t zips < <(find . -type f -name '*.zip' -not -path './.git/*' | sort)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "::error::No .zip archive was found in the repository."
+            exit 1
+          fi
+          mkdir -p extracted
+          for i in "${!zips[@]}"; do
+            dest="extracted/archive-$((i + 1))"
+            mkdir -p "$dest"
+            unzip -q "${zips[$i]}" -d "$dest"
+          done
+
+      - name: Locate Android or Capacitor project
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t gradles < <(find extracted -type f -name gradlew | sort)
+          if [ "${#gradles[@]}" -eq 1 ]; then
+            echo "kind=gradle" >> "$GITHUB_OUTPUT"
+            echo "root=$(dirname "${gradles[0]}")" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "${#gradles[@]}" -gt 1 ]; then
+            echo "::error::More than one Android Gradle project was found in the ZIP archives."
+            printf '%s\n' "${gradles[@]}"
+            exit 1
+          fi
+
+          mapfile -t caps < <(find extracted -type f \( -name 'capacitor.config.ts' -o -name 'capacitor.config.js' -o -name 'capacitor.config.json' \) | while read -r f; do
+            [ -f "$(dirname "$f")/package.json" ] && echo "$f"
+          done | sort)
+
+          if [ "${#caps[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Capacitor project (capacitor.config.* plus package.json); found ${#caps[@]}."
+            exit 1
+          fi
+          echo "kind=capacitor" >> "$GITHUB_OUTPUT"
+          echo "root=$(dirname "${caps[0]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Build Capacitor Android project
+        if: steps.locate.outputs.kind == 'capacitor'
+        working-directory: ${{ steps.locate.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+          npm run build
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Build native Android project
+        if: steps.locate.outputs.kind == 'gradle'
+        working-directory: ${{ steps.locate.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rig-studio-debug-apk
+          path: |
+            extracted/**/build/outputs/apk/**/*.apk
+            extracted/**/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
